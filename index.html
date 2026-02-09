@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Vanguard Portfolio Dashboard (Portable)</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    body {
+      font-family: 'Inter', sans-serif;
+      background-color: #020617; /* Tailwind slate-950 */
+      color: #f8fafc; /* Tailwind slate-50 */
+    }
+    .no-scrollbar::-webkit-scrollbar { display: none; }
+    .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+  </style>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "react": "https://esm.sh/react@18.2.0",
+      "react-dom": "https://esm.sh/react-dom@18.2.0",
+      "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
+      "lucide-react": "https://esm.sh/lucide-react@0.263.1?external=react",
+      "papaparse": "https://esm.sh/papaparse@5.4.1",
+      "chart.js": "https://esm.sh/chart.js@4.4.0",
+      "react-chartjs-2": "https://esm.sh/react-chartjs-2@5.2.0?external=react,chart.js",
+      "htm": "https://esm.sh/htm@3.1.1"
+    }
+  }
+  </script>
+<link rel="stylesheet" href="/index.css">
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="module">
+    import React, { useState, useEffect, useMemo } from 'react';
+    import ReactDOM from 'react-dom/client';
+    import * as LucideIcons from 'lucide-react';
+    import Papa from 'papaparse';
+    import {
+      Chart as ChartJS,
+      CategoryScale,
+      LinearScale,
+      PointElement,
+      LineElement,
+      Title,
+      Tooltip,
+      Filler,
+      Legend
+    } from 'chart.js';
+    import { Line } from 'react-chartjs-2';
+    import htm from 'htm';
+
+    const html = htm.bind(React.createElement);
+
+    // Register ChartJS
+    ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Filler, Legend);
+
+    // --- Constants ---
+    const CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vR7Q4zPpale4d-Hvf-oaZso27SrSxuNv8PPwT5kzzzU3DiX1WZ5kTbWou1azNjDUYaro25-hBTeONcO/pub?gid=0&single=true&output=csv';
+
+    const FUNDS = [
+      { key: 'vtsax', label: 'VTSAX - Vanguard Total Stock Market Index Fund', color: '#3b82f6' },
+      { key: 'vfiax', label: 'VFIAX - Vanguard 500 Index Fund', color: '#0ea5e9' },
+      { key: 'vimax', label: 'VIMAX - Vanguard Mid-Cap Index Fund', color: '#6366f1' },
+      { key: 'vsmax', label: 'VSMAX - Vanguard Small-Cap Index Fund', color: '#a855f7' },
+      { key: 'vtiax', label: 'VTIAX - Vanguard Total International Stock Index Fund', color: '#10b981' },
+      { key: 'vemax', label: 'VEMAX - Vanguard Emerging Markets Stock Index Fund', color: '#f59e0b' },
+      { key: 'vgslx', label: 'VGSLX - Vanguard Real Estate Index Fund', color: '#f43f5e' },
+      { key: 'vgrlx', label: 'VGRLX - Vanguard Global ex-U.S. Real Estate Index Fund', color: '#06b6d4' },
+      { key: 'vcsax', label: 'VCSAX - Vanguard Communication Services Index Fund', color: '#eab308' },
+      { key: 'venax', label: 'VENAX - Vanguard Energy Index Fund', color: '#84cc16' },
+      { key: 'vinax', label: 'VINAX - Vanguard Industrials Index Fund', color: '#f97316' },
+      { key: 'vitax', label: 'VITAX - Vanguard Information Technology Index Fund', color: '#ec4899' },
+    ];
+
+    // --- Data Service Logic ---
+    async function fetchAndParseData() {
+      return new Promise((resolve, reject) => {
+        Papa.parse(CSV_URL, {
+          download: true,
+          header: true,
+          complete: (results) => {
+            try {
+              const parseVal = (v) => {
+                if (v === null || v === undefined || String(v).trim() === '') return null;
+                const n = parseFloat(String(v).replace(/[^-0-9.]/g, ''));
+                return isNaN(n) ? null : n;
+              };
+
+              const findValue = (row, key) => {
+                const normalizedTarget = key.toLowerCase().trim();
+                const actualKey = Object.keys(row).find(k => k.toLowerCase().trim() === normalizedTarget);
+                return actualKey ? row[actualKey] : null;
+              };
+
+              const data = results.data.map((row) => {
+                const dateStr = findValue(row, 'Date');
+                const obj = { date: new Date(dateStr) };
+                FUNDS.forEach(f => { obj[f.key] = parseVal(findValue(row, f.key.toUpperCase())); });
+                return obj;
+              })
+              .filter(row => !isNaN(row.date.getTime()))
+              .sort((a, b) => a.date.getTime() - b.date.getTime());
+              
+              resolve(data);
+            } catch (error) { reject(error); }
+          },
+          error: (error) => reject(error),
+        });
+      });
+    }
+
+    function filterDataByTimeframe(data, timeframe) {
+      if (data.length === 0) return [];
+      const lastDate = data[data.length - 1].date;
+      let startDate = new Date(lastDate);
+      switch (timeframe) {
+        case '1D': return data.slice(-2);
+        case '5D': return data.slice(-5);
+        case '1M': startDate.setMonth(startDate.getMonth() - 1); break;
+        case '6M': startDate.setMonth(startDate.getMonth() - 6); break;
+        case '1Y': startDate.setFullYear(startDate.getFullYear() - 1); break;
+        case 'YTD': startDate = new Date(lastDate.getFullYear(), 0, 1); break;
+        case '5Y': startDate.setFullYear(startDate.getFullYear() - 5); break;
+        case 'MAX': default: return data;
+      }
+      return data.filter(row => row.date >= startDate);
+    }
+
+    function calculateGrowth(filteredData, key) {
+      const values = filteredData.map(d => d[key]).filter(v => v !== null);
+      if (values.length < 2) return 0;
+      const startValue = values[0];
+      const endValue = values[values.length - 1];
+      if (!startValue) return 0;
+      return ((endValue - startValue) / startValue) * 100;
+    }
+
+    // --- Components ---
+    const FundChart = ({ data, fund }) => {
+      const growth = useMemo(() => calculateGrowth(data, fund.key), [data, fund.key]);
+      
+      const chartData = useMemo(() => ({
+        labels: data.map(d => d.date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' })),
+        datasets: [{
+          label: fund.label,
+          data: data.map(d => d[fund.key]),
+          borderColor: fund.color,
+          backgroundColor: `${fund.color}15`,
+          fill: true,
+          tension: 0.4,
+          pointRadius: 0, 
+          pointHoverRadius: 6,
+          borderWidth: 2,
+        }],
+      }), [data, fund]);
+
+      const options = {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            mode: 'index',
+            intersect: false,
+            backgroundColor: '#1e293b',
+            titleColor: '#94a3b8',
+            bodyColor: '#f8fafc',
+            borderColor: '#334155',
+            borderWidth: 1,
+            padding: 12,
+            callbacks: {
+              label: (context) => `$${context.parsed.y.toLocaleString(undefined, { minimumFractionDigits: 2 })}`
+            }
+          },
+        },
+        scales: {
+          x: { grid: { display: false }, ticks: { color: '#64748b', maxTicksLimit: 6, font: { size: 10 } } },
+          y: { position: 'right', grid: { color: '#1e293b' }, ticks: { color: '#64748b', font: { size: 10 }, maxTicksLimit: 6, callback: v => `$${Number(v).toLocaleString()}` } },
+        },
+      };
+
+      const currentValue = useMemo(() => {
+        for (let i = data.length - 1; i >= 0; i--) {
+          if (data[i][fund.key] !== null) return data[i][fund.key];
+        }
+        return null;
+      }, [data, fund.key]);
+
+      return html`
+        <div className="bg-slate-900/40 border border-slate-800 p-6 rounded-2xl shadow-lg hover:border-slate-600 hover:bg-slate-900/60 transition-all flex flex-col h-[380px]">
+          <div className="flex justify-between items-start mb-6">
+            <div className="flex-1 min-w-0 pr-4">
+              <span className="px-1.5 py-0.5 bg-slate-800 text-[10px] font-black rounded text-slate-400 uppercase tracking-tighter mb-2 inline-block">
+                ${fund.key}
+              </span>
+              <h3 className="text-slate-200 text-sm font-semibold truncate leading-tight mb-2">${fund.label.split(' - ')[1] || fund.label}</h3>
+              <p className="text-3xl font-bold tracking-tighter text-white">
+                ${currentValue !== null ? `$${currentValue.toLocaleString(undefined, { minimumFractionDigits: 2 })}` : 'N/A'}
+              </p>
+            </div>
+            <div className="text-right flex flex-col items-end">
+              <p className="text-[10px] text-slate-500 uppercase font-bold tracking-wider mb-1">Growth</p>
+              <span className=${`flex items-center gap-1 font-bold text-sm ${growth >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                ${growth >= 0 ? html`<${LucideIcons.TrendingUp} size=${14} />` : html`<${LucideIcons.TrendingDown} size=${14} />`}
+                ${Math.abs(growth).toFixed(2)}%
+              </span>
+            </div>
+          </div>
+          <div className="flex-1 w-full relative">
+            <${Line} options=${options} data=${chartData} />
+          </div>
+        </div>
+      `;
+    };
+
+    const App = () => {
+      const [allData, setAllData] = useState([]);
+      const [timeframe, setTimeframe] = useState('1Y');
+      const [loading, setLoading] = useState(true);
+      const [error, setError] = useState(null);
+
+      useEffect(() => {
+        fetchAndParseData()
+          .then(data => { setAllData(data); setLoading(false); })
+          .catch(err => { setError('Failed to sync. Please ensure you have an internet connection.'); setLoading(false); });
+      }, []);
+
+      const filteredData = useMemo(() => filterDataByTimeframe(allData, timeframe), [allData, timeframe]);
+      const timeframeOptions = ['1D', '5D', '1M', '6M', 'YTD', '1Y', '5Y', 'MAX'];
+
+      if (loading) return html`
+        <div className="min-h-screen flex flex-col items-center justify-center bg-slate-950 text-white">
+          <${LucideIcons.RefreshCw} className="animate-spin mb-4 text-blue-500" size=${48} />
+          <p className="text-slate-400 font-medium">Retrieving Market Data...</p>
+        </div>
+      `;
+
+      if (error) return html`
+        <div className="min-h-screen flex flex-col items-center justify-center bg-slate-950 text-white p-6">
+          <div className="bg-rose-500/10 border border-rose-500/20 p-10 rounded-3xl text-center max-w-lg shadow-2xl">
+            <${LucideIcons.AlertCircle} className="mx-auto mb-6 text-rose-500" size=${64} />
+            <h2 className="text-2xl font-bold mb-3">Sync Failed</h2>
+            <p className="text-slate-400 mb-8">${error}</p>
+            <button onClick=${() => window.location.reload()} className="px-8 py-3 bg-rose-500 hover:bg-rose-600 rounded-xl transition-all font-bold">Retry</button>
+          </div>
+        </div>
+      `;
+
+      return html`
+        <div className="min-h-screen bg-slate-950 text-slate-50 p-4 md:p-8 lg:p-12">
+          <header className="max-w-7xl mx-auto flex flex-col md:flex-row md:items-center justify-between mb-16 gap-6">
+            <div className="flex items-center gap-4">
+              <div className="p-3 bg-blue-600 rounded-2xl shadow-2xl shadow-blue-500/30">
+                <${LucideIcons.LayoutDashboard} size=${32} />
+              </div>
+              <div>
+                <h1 className="text-3xl font-extrabold tracking-tight">Portfolio</h1>
+                <p className="text-slate-500 text-sm font-medium uppercase tracking-widest">Market Index Tracker</p>
+              </div>
+            </div>
+            <nav className="flex bg-slate-900/50 backdrop-blur-sm p-1.5 rounded-2xl border border-slate-800 overflow-x-auto no-scrollbar shadow-xl">
+              ${timeframeOptions.map((opt) => html`
+                <button key=${opt} onClick=${() => setTimeframe(opt)} className=${`px-5 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap ${timeframe === opt ? 'bg-blue-600 text-white' : 'text-slate-500 hover:text-slate-300'}`}>
+                  ${opt}
+                </button>
+              `)}
+            </nav>
+          </header>
+          <main className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-8">
+            ${FUNDS.map((fund) => html`<${FundChart} key=${fund.key} data=${filteredData} fund=${fund} />`)}
+          </main>
+          <footer className="max-w-7xl mx-auto mt-20 pt-10 border-t border-slate-900 flex flex-col md:flex-row justify-between items-center text-slate-600 text-[10px] font-bold uppercase tracking-widest gap-6">
+            <p>© 2024 Vanguard Index Explorer</p>
+            <div className="flex items-center gap-6">
+              <span className="flex items-center gap-1.5"><${LucideIcons.RefreshCw} size=${14} className="text-blue-500" /> Real-time Feed</span>
+              <span className="flex items-center gap-1.5"><${LucideIcons.BarChart3} size=${14} className="text-emerald-500" /> Analytics</span>
+            </div>
+          </footer>
+        </div>
+      `;
+    };
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(React.createElement(App));
+  </script>
+<script type="module" src="/index.tsx"></script>
+</body>
+</html>
