@@ -1,10 +1,9 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Vanguard Portfolio Dashboard</title>
+  <title>Vanguard Index Fund Tracker</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <style>
@@ -16,23 +15,360 @@
     }
     .no-scrollbar::-webkit-scrollbar { display: none; }
     .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    
+    /* Custom styles for consistent chart tooltips */
+    .recharts-tooltip-wrapper {
+      outline: none !important;
+    }
   </style>
-<script type="importmap">
-{
-  "imports": {
-    "react/": "https://esm.sh/react@^19.2.4/",
-    "react": "https://esm.sh/react@^19.2.4",
-    "react-dom/": "https://esm.sh/react-dom@^19.2.4/",
-    "lucide-react": "https://esm.sh/lucide-react@^0.563.0",
-    "recharts": "https://esm.sh/recharts@^3.7.0",
-    "papaparse": "https://esm.sh/papaparse@^5.5.3"
+
+  <!-- Babel Standalone: Transpiles JSX in the browser -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "react": "https://esm.sh/react@19.0.0",
+      "react-dom": "https://esm.sh/react-dom@19.0.0",
+      "react-dom/client": "https://esm.sh/react-dom@19.0.0/client",
+      "lucide-react": "https://esm.sh/lucide-react@0.460.0?deps=react@19.0.0",
+      "recharts": "https://esm.sh/recharts@2.13.3?deps=react@19.0.0,react-dom@19.0.0",
+      "papaparse": "https://esm.sh/papaparse@5.4.1"
+    }
   }
-}
-</script>
+  </script>
 <link rel="stylesheet" href="/index.css">
 </head>
 <body>
   <div id="root"></div>
-  <script type="module" src="/index.tsx"></script>
+
+  <script type="text/babel" data-type="module">
+    import React, { useState, useEffect, useMemo, useCallback } from 'react';
+    import ReactDOM from 'react-dom/client';
+    import { 
+      LayoutDashboard, 
+      RefreshCw, 
+      AlertCircle, 
+      BarChart3, 
+      TrendingUp, 
+      TrendingDown 
+    } from 'lucide-react';
+    import { 
+      AreaChart, 
+      Area, 
+      XAxis, 
+      YAxis, 
+      Tooltip, 
+      ResponsiveContainer, 
+      CartesianGrid 
+    } from 'recharts';
+    import Papa from 'papaparse';
+
+    // IMPORTANT: Assign React to window so Babel's JSX transform (React.createElement) 
+    // uses the same instance as the hooks imported above.
+    window.React = React;
+
+    // --- Constants ---
+    const CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vR7Q4zPpale4d-Hvf-oaZso27SrSxuNv8PPwT5kzzzU3DiX1WZ5kTbWou1azNjDUYaro25-hBTeONcO/pub?gid=0&single=true&output=csv';
+
+    const FUNDS = [
+      { key: 'vtsax', label: 'VTSAX - Vanguard Total Stock Market Index Fund', color: '#3b82f6' },
+      { key: 'vfiax', label: 'VFIAX - Vanguard 500 Index Fund', color: '#0ea5e9' },
+      { key: 'vimax', label: 'VIMAX - Vanguard Mid-Cap Index Fund', color: '#6366f1' },
+      { key: 'vsmax', label: 'VSMAX - Vanguard Small-Cap Index Fund', color: '#a855f7' },
+      { key: 'vtiax', label: 'VTIAX - Vanguard Total International Stock Index Fund', color: '#10b981' },
+      { key: 'vemax', label: 'VEMAX - Vanguard Emerging Markets Stock Index Fund', color: '#f59e0b' },
+      { key: 'vgslx', label: 'VGSLX - Vanguard Real Estate Index Fund', color: '#f43f5e' },
+      { key: 'vgrlx', label: 'VGRLX - Vanguard Global ex-U.S. Real Estate Index Fund', color: '#06b6d4' },
+      { key: 'vcsax', label: 'VCSAX - Vanguard Communication Services Index Fund', color: '#eab308' },
+      { key: 'venax', label: 'VENAX - Vanguard Energy Index Fund', color: '#84cc16' },
+      { key: 'vinax', label: 'VINAX - Vanguard Industrials Index Fund', color: '#f97316' },
+      { key: 'vitax', label: 'VITAX - Vanguard Information Technology Index Fund', color: '#ec4899' },
+    ];
+
+    const TIMEFRAME_OPTIONS = ['1D', '5D', '1M', '6M', 'YTD', '1Y', '5Y', 'MAX'];
+
+    // --- Utilities & Logic ---
+    const parseVal = (v) => {
+      if (v === null || v === undefined || String(v).trim() === '') return null;
+      const n = parseFloat(String(v).replace(/[^-0-9.]/g, ''));
+      return isNaN(n) ? null : n;
+    };
+
+    const findValue = (row, key) => {
+      const normalizedTarget = key.toLowerCase().trim();
+      const actualKey = Object.keys(row).find(k => k.toLowerCase().trim() === normalizedTarget);
+      return actualKey ? row[actualKey] : null;
+    };
+
+    async function fetchMarketData() {
+      return new Promise((resolve, reject) => {
+        Papa.parse(CSV_URL, {
+          download: true,
+          header: true,
+          complete: (results) => {
+            try {
+              const data = results.data.map((row) => {
+                const dateStr = findValue(row, 'Date');
+                if (!dateStr) return null;
+                const dateObj = new Date(dateStr);
+                if (isNaN(dateObj.getTime())) return null;
+
+                const obj = { date: dateObj };
+                FUNDS.forEach(f => {
+                  obj[f.key] = parseVal(findValue(row, f.key.toUpperCase()));
+                });
+                return obj;
+              })
+              .filter((row) => row !== null)
+              .sort((a, b) => a.date.getTime() - b.date.getTime());
+
+              resolve(data);
+            } catch (error) {
+              reject(error);
+            }
+          },
+          error: (error) => reject(error),
+        });
+      });
+    }
+
+    function filterDataByTimeframe(data, timeframe) {
+      if (data.length === 0) return [];
+      const lastDate = data[data.length - 1].date;
+      let startDate = new Date(lastDate);
+
+      switch (timeframe) {
+        case '1D': return data.slice(-2);
+        case '5D': return data.slice(-5);
+        case '1M': startDate.setMonth(startDate.getMonth() - 1); break;
+        case '6M': startDate.setMonth(startDate.getMonth() - 6); break;
+        case '1Y': startDate.setFullYear(startDate.getFullYear() - 1); break;
+        case 'YTD': startDate = new Date(lastDate.getFullYear(), 0, 1); break;
+        case '5Y': startDate.setFullYear(startDate.getFullYear() - 5); break;
+        case 'MAX': return data;
+        default: return data;
+      }
+      return data.filter(row => row.date >= startDate);
+    }
+
+    function calculateGrowth(filteredData, key) {
+      const values = filteredData.map(d => d[key]).filter(v => v !== null && v !== undefined);
+      if (values.length < 2) return 0;
+      const startValue = values[0];
+      const endValue = values[values.length - 1];
+      if (!startValue) return 0;
+      return ((endValue - startValue) / startValue) * 100;
+    }
+
+    // --- Components ---
+    const TimeframeSelector = ({ current, onSelect }) => (
+      <nav className="flex bg-slate-900/50 backdrop-blur-sm p-1.5 rounded-2xl border border-slate-800 overflow-x-auto no-scrollbar shadow-xl">
+        {TIMEFRAME_OPTIONS.map((opt) => (
+          <button
+            key={opt}
+            onClick={() => onSelect(opt)}
+            className={`px-5 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap ${
+              current === opt 
+                ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/20' 
+                : 'text-slate-500 hover:text-slate-300'
+            }`}
+          >
+            {opt}
+          </button>
+        ))}
+      </nav>
+    );
+
+    const FundCard = ({ fund, data }) => {
+      const growth = useMemo(() => calculateGrowth(data, fund.key), [data, fund.key]);
+      
+      const currentValue = useMemo(() => {
+        for (let i = data.length - 1; i >= 0; i--) {
+          const val = data[i][fund.key];
+          if (val !== null && val !== undefined) return val;
+        }
+        return null;
+      }, [data, fund.key]);
+
+      const chartData = useMemo(() => {
+        return data.map(d => ({
+          date: d.date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' }),
+          value: d[fund.key]
+        })).filter(d => d.value !== null && !isNaN(d.value));
+      }, [data, fund.key]);
+
+      const formatCurrency = (val) => 
+        `$${val.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+      return (
+        <div className="bg-slate-900/40 border border-slate-800 p-6 rounded-2xl shadow-lg hover:border-slate-600 hover:bg-slate-900/60 transition-all flex flex-col h-[400px]">
+          <div className="flex justify-between items-start mb-6">
+            <div className="flex-1 min-w-0 pr-4">
+              <span className="px-1.5 py-0.5 bg-slate-800 text-[10px] font-black rounded text-slate-400 uppercase tracking-tighter mb-2 inline-block">
+                {fund.key}
+              </span>
+              <h3 className="text-slate-200 text-sm font-semibold truncate leading-tight mb-2">
+                {fund.label.split(' - ')[1] || fund.label}
+              </h3>
+              <p className="text-3xl font-bold tracking-tighter text-white">
+                {currentValue !== null ? formatCurrency(currentValue) : 'N/A'}
+              </p>
+            </div>
+            <div className="text-right flex flex-col items-end">
+              <p className="text-[10px] text-slate-500 uppercase font-bold tracking-wider mb-1">Growth</p>
+              <span className={`flex items-center gap-1 font-bold text-sm ${growth >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                {growth >= 0 ? <TrendingUp size={14} /> : <TrendingDown size={14} />}
+                {Math.abs(growth).toFixed(2)}%
+              </span>
+            </div>
+          </div>
+          
+          <div className="flex-1 w-full relative min-h-0">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                <defs>
+                  <linearGradient id={`gradient-${fund.key}`} x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor={fund.color} stopOpacity={0.3}/>
+                    <stop offset="95%" stopColor={fund.color} stopOpacity={0}/>
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
+                <XAxis 
+                  dataKey="date" 
+                  hide={true}
+                />
+                <YAxis 
+                  orientation="right" 
+                  domain={['auto', 'auto']}
+                  tick={{ fill: '#64748b', fontSize: 10 }}
+                  tickFormatter={(val) => `$${val >= 1000 ? (val/1000).toFixed(1) + 'k' : val}`}
+                  axisLine={false}
+                  tickLine={false}
+                  width={45}
+                />
+                <Tooltip 
+                  contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '8px', color: '#f8fafc' }}
+                  itemStyle={{ color: fund.color }}
+                  labelStyle={{ color: '#94a3b8', fontSize: '12px' }}
+                  formatter={(value) => [formatCurrency(value), 'Price']}
+                />
+                <Area 
+                  type="monotone" 
+                  dataKey="value" 
+                  stroke={fund.color} 
+                  fillOpacity={1} 
+                  fill={`url(#gradient-${fund.key})`} 
+                  strokeWidth={2}
+                  isAnimationActive={true}
+                />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      );
+    };
+
+    const App = () => {
+      const [allData, setAllData] = useState([]);
+      const [timeframe, setTimeframe] = useState('1Y');
+      const [loading, setLoading] = useState(true);
+      const [error, setError] = useState(null);
+
+      const loadData = useCallback(async () => {
+        setLoading(true);
+        setError(null);
+        try {
+          const data = await fetchMarketData();
+          setAllData(data);
+        } catch (err) {
+          setError('Failed to sync. Please ensure you have an internet connection.');
+          console.error(err);
+        } finally {
+          setLoading(false);
+        }
+      }, []);
+
+      useEffect(() => {
+        loadData();
+      }, [loadData]);
+
+      const filteredData = useMemo(() => 
+        filterDataByTimeframe(allData, timeframe), 
+      [allData, timeframe]);
+
+      if (loading) {
+        return (
+          <div className="min-h-screen flex flex-col items-center justify-center bg-slate-950 text-white">
+            <RefreshCw className="animate-spin mb-4 text-blue-500" size={48} />
+            <p className="text-slate-400 font-medium animate-pulse">Retrieving Market Data...</p>
+          </div>
+        );
+      }
+
+      if (error) {
+        return (
+          <div className="min-h-screen flex flex-col items-center justify-center bg-slate-950 text-white p-6">
+            <div className="bg-rose-500/10 border border-rose-500/20 p-10 rounded-3xl text-center max-w-lg shadow-2xl">
+              <AlertCircle className="mx-auto mb-6 text-rose-500" size={64} />
+              <h2 className="text-2xl font-bold mb-3">Sync Failed</h2>
+              <p className="text-slate-400 mb-8">{error}</p>
+              <button 
+                onClick={loadData} 
+                className="px-8 py-3 bg-rose-500 hover:bg-rose-600 rounded-xl transition-all font-bold shadow-lg shadow-rose-600/20"
+              >
+                Retry Sync
+              </button>
+            </div>
+          </div>
+        );
+      }
+
+      return (
+        <div className="min-h-screen bg-slate-950 text-slate-50 p-4 md:p-8 lg:p-12">
+          <header className="max-w-7xl mx-auto flex flex-col md:flex-row md:items-center justify-between mb-12 md:mb-16 gap-6">
+            <div className="flex items-center gap-4">
+              <div className="p-3 bg-blue-600 rounded-2xl shadow-2xl shadow-blue-500/30">
+                <LayoutDashboard size={32} className="text-white" />
+              </div>
+              <div>
+                <h1 className="text-3xl font-extrabold tracking-tight">Vanguard</h1>
+                <p className="text-slate-500 text-sm font-medium uppercase tracking-widest">Index Fund Tracker</p>
+              </div>
+            </div>
+            
+            <TimeframeSelector current={timeframe} onSelect={setTimeframe} />
+          </header>
+
+          <main className="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 xl:grid-cols-2 gap-8">
+            {FUNDS.map((fund) => (
+              <FundCard key={fund.key} data={filteredData} fund={fund} />
+            ))}
+          </main>
+
+          <footer className="max-w-7xl mx-auto mt-20 pt-10 border-t border-slate-900 flex flex-col md:flex-row justify-between items-center text-slate-600 text-[10px] font-bold uppercase tracking-widest gap-6">
+            <p>© 2025 Vanguard Index Explorer</p>
+            <div className="flex items-center gap-6">
+              <span className="flex items-center gap-1.5 hover:text-blue-400 transition-colors cursor-default">
+                <RefreshCw size={14} className="text-blue-500" /> Real-time Feed
+              </span>
+              <span className="flex items-center gap-1.5 hover:text-emerald-400 transition-colors cursor-default">
+                <BarChart3 size={14} className="text-emerald-500" /> Analytics Engine
+              </span>
+            </div>
+          </footer>
+        </div>
+      );
+    };
+
+    const rootElement = document.getElementById('root');
+    const root = ReactDOM.createRoot(rootElement);
+    root.render(
+      <React.StrictMode>
+        <App />
+      </React.StrictMode>
+    );
+  </script>
+<script type="module" src="/index.tsx"></script>
 </body>
 </html>
