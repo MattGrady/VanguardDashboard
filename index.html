@@ -16,7 +16,6 @@
     .no-scrollbar::-webkit-scrollbar { display: none; }
     .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
     
-    /* Custom styles for consistent chart tooltips */
     .recharts-tooltip-wrapper {
       outline: none !important;
     }
@@ -30,8 +29,8 @@
       "react": "https://esm.sh/react@19.0.0",
       "react-dom": "https://esm.sh/react-dom@19.0.0",
       "react-dom/client": "https://esm.sh/react-dom@19.0.0/client",
-      "lucide-react": "https://esm.sh/lucide-react@0.460.0?deps=react@19.0.0",
-      "recharts": "https://esm.sh/recharts@2.13.3?deps=react@19.0.0,react-dom@19.0.0",
+      "lucide-react": "https://esm.sh/lucide-react@0.460.0?external=react",
+      "recharts": "https://esm.sh/recharts@2.13.3?external=react,react-dom",
       "papaparse": "https://esm.sh/papaparse@5.4.1"
     }
   }
@@ -40,7 +39,7 @@
 <body>
   <div id="root"></div>
 
-  <script type="text/babel" data-type="module" data-presets="react,env" data-runtime="classic">
+  <script type="text/babel" data-type="module" data-presets="react,env">
     import React, { useState, useEffect, useMemo, useCallback } from 'react';
     import ReactDOM from 'react-dom/client';
     import { 
@@ -62,12 +61,7 @@
     } from 'recharts';
     import Papa from 'papaparse';
 
-    // IMPORTANT: Assign React to window so Babel's JSX transform (React.createElement) 
-    // uses the same instance as the hooks imported above.
-    window.React = React;
-
     // --- Constants ---
-    // FIXED: Formatted to target the raw CSV direct download stream endpoint instead of the standard text UI view link
     const CSV_URL = 'https://docs.google.com/spreadsheets/d/1-II3bj-vMSNvYvaEUkAi82eTkCfQNG99FHSyPMvwHIA/export?format=csv&gid=0';
 
     const FUNDS = [
@@ -281,7 +275,7 @@
           const data = await fetchMarketData();
           setAllData(data);
         } catch (err) {
-          setError('Failed to sync. Please ensure you have an internet connection.');
+          setError('Failed to sync data feed. Please check link format and network connectivity.');
           console.error(err);
         } finally {
           setLoading(false);
